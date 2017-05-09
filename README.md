@@ -2,7 +2,7 @@
 
 Script for rman backups.
 Options included: catalog, tape backup, secondary disk backup.
-Works on Oracle (10G,11G and 12c) with linux SO. Tested on rhel 5 and rhel 6.
+Works on Oracle (10G,11G and 12c) with linux os. Tested on rhel 5 and rhel 6.
 
 It folows these steps:
 1. connects to catalog (optional)
@@ -11,7 +11,7 @@ It folows these steps:
 1. backup to a secondary disk location (optional)
 
 Features:
-1. Parallel backup on local disk (cpu count)
-1. Parameterized options: catalog, tape backup, secondary disk backup
-1. Sends an e-mail when an error ocurred, with the log attachment
+* Parallel backup on local disk (cpu count)
+* Parameterized options: catalog, tape backup, secondary disk backup
+* Sends an e-mail when an error ocurred, with the log attachment
 
