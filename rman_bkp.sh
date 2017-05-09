@@ -1,17 +1,18 @@
 #!/bin/bash
 
-
+############## PARAMETROS - PASSADOS NA LINHA DE COMANDO ######################
 # nome da instancia
 DBNAME=$1	# ex. 'PD01', 'CATRMAN'
 # nivel do backup (level 0 = FULL, level 1 = INCREMENTAL, level 2 = ARCHIVES)
 LEVEL=$2	# ex. '0', '1', '2'
-############## PARAMETROS #####################################################
+############## PARAMETROS - GERAIS ############################################
 # lock desse script, para nao executar mais de uma vez ao mesmo tempo
 LOCK_FILE="/u01/app/oracle/rman/bkp.lock"
 # diretorio onde ficam os logs do backup
 LOG_DIR="/u01/app/oracle/rman/log"
 # e-mails que recebe os logs em caso de erro
 MAIL_DEST=""
+############## PARAMETROS - CATALOGO ##########################################
 # Uso de um catálogo rman (0 = desativado, 1 = ativado)
 USE_CATALOG=0
 # usuario/senha@tns_do_catalogo
@@ -34,8 +35,7 @@ NFS_DISK="/u01/app/oracle/rman/nfs"
 ###############################################################################
 
 
-############## FUNCOES #######################################################
-
+############## FUNCOES ########################################################
 
 # Seta variaveis como:
 # - paralelismo do backup em disco
@@ -79,6 +79,10 @@ function setvar () {
 	
 	# extrai a versao do banco
 	ORAVER=$(tnsping | grep -i version | awk '{print $7}' | cut -d\. -f1)
+}
+
+
+function rman_public () {
 
 	# utiliza catalogo
 	if [[ ${USE_CATALOG} == "1" ]] ; then
@@ -87,6 +91,14 @@ function setvar () {
 		RMAN_CATALOG=""
 	fi
 
+	# backup do controlfile
+	RMAN_CFILE="backup as compressed backupset current controlfile tag = 'CTF-${DATE}';"
+
+	# backup do spfile
+	RMAN_SPFILE="backup as compressed backupset spfile tag = 'SPF-${DATE}';"
+}
+
+function rman_disk () {
 
 	# caso seja backup do tipo archive (level 2)
 	if [[ ${LEVEL} == "2" ]] ; then
@@ -101,7 +113,9 @@ function setvar () {
 			RMAN_DISK="backup as compressed backupset section size 5G filesperset 10 incremental level ${LEVEL} database tag = 'LVL${LEVEL}-${DATE}' plus archivelog tag = 'ARCH-${DATE}';"
 		fi
 	fi
-	
+}
+
+function rman_nfs () {
 	## PARAM NFS
 	if [[ ${USE_NFS} == "1" ]] ; then
 		# cria o diretorio do backup nfs
@@ -116,7 +130,9 @@ function setvar () {
 	else
 		RMAN_NFS=""
 	fi
+}
 
+function rman_tape () {
 	## PARAM TAPE
 	if [[ ${USE_TAPE} == "1" ]] ; then
 		# aloca 8 canais para backup via TDP, incluindo o formato
@@ -141,12 +157,6 @@ function setvar () {
 		RMAN_TDP=""
 		DELETE_TDP=""
 	fi
-
-	# backup do controlfile
-	RMAN_CFILE="backup as compressed backupset current controlfile tag = 'CTF-${DATE}';"
-
-	# backup do spfile
-	RMAN_SPFILE="backup as compressed backupset spfile tag = 'SPF-${DATE}';"
 }
 
 
@@ -276,7 +286,12 @@ function rc () {
         flock -n 9 || exit 200
 	# Seta todas as variaiveis necessarias
 	setvar
-	# Backup em disco e fita
+	# Monta os comandos que serao executados no rman
+	rman_public
+	rman_disk
+	rman_nfs
+	rman_tape
+	# Executa o backup no rman
 	backup
 	# Em caso de erro, envia e-mail
 	email
