@@ -13,7 +13,8 @@ It folows these steps:
 Features:
 * Parallel backup on local disk (cpu count)
 * Parameterized options: catalog, tape backup, secondary disk backup
-* Sends an e-mail when an error ocurred, with the log attachment
+* Sends an e-mail when an error ocurred, with the log attached
+* Concurrency control, with only one execution allowed at a time
 
 ## How to use
 
