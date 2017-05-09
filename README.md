@@ -15,3 +15,17 @@ Features:
 * Parameterized options: catalog, tape backup, secondary disk backup
 * Sends an e-mail when an error ocurred, with the log attachment
 
+## How to use
+
+### Configure
+
+Edit the script **rman_bkp.sh**, reading the comments of the parameters and 
+adjusting according to your environment.
+
+### Execute
+
+For example, if your instance is named *orcl* and you want a full backup:
+
+```
+./rman_bkp orcl 0
+```
