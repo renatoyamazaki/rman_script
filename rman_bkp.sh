@@ -1,20 +1,36 @@
 #!/bin/bash
 
-############## PARAMETROS #####################################################
+
 # nome da instancia
-DBNAME=$1	# ex. PD01, CATRMAN
+DBNAME=$1	# ex. 'PD01', 'CATRMAN'
 # nivel do backup (level 0 = FULL, level 1 = INCREMENTAL, level 2 = ARCHIVES)
-LEVEL=$2	# ex. 0, 1, 2
+LEVEL=$2	# ex. '0', '1', '2'
+############## PARAMETROS #####################################################
+# lock desse script, para nao executar mais de uma vez ao mesmo tempo
+LOCK_FILE="/u01/app/oracle/rman/bkp.lock"
+# diretorio onde ficam os logs do backup
+LOG_DIR="/u01/app/oracle/rman/log"
+# e-mails que recebe os logs em caso de erro
+MAIL_DEST=""
+# Uso de um catálogo rman (0 = desativado, 1 = ativado)
+USE_CATALOG=0
+# usuario/senha@tns_do_catalogo
+CATALOG="rman/senha@catrman"
+############## PARAMETROS - BACKUP LOCAL ######################################
 # retencao do backup no disco em dias
 RETENT_DISK=7
+############## PARAMETROS - BACKUP EM FITA ####################################
+# utilização de backup em fita (0 = desativado, 1 = ativado)
+USE_TAPE=0
 # retencao do backup em fita em dias
 RETENT_TAPE=31
-# lista de e-mails que recebe os logs
-MAIL_DEST="johndoe@email.com"
-# usuario, senha e tns do catalogo
-CATALOG="username/password@catalog"
-# NFS mount
-NFS_DISK="/u09/app/oracle/rman"
+# parametros do TDP
+TDPO="ENV=(TDPO_OPTFILE=/opt/tivoli/tsm/client/oracle/bin64/tdpo.opt)"
+############## PARAMETROS - BACKUP NO NFS #####################################
+# utilização de backup em nfs (0 = desativado, 1 = ativado)
+USE_NFS=0
+# diretorio nfs
+NFS_DISK="/u01/app/oracle/rman/nfs"
 ###############################################################################
 
 
@@ -31,38 +47,22 @@ NFS_DISK="/u09/app/oracle/rman"
 function setvar () {
 
 	# variaveis utilizadas no log do backup e no rman
-	HOSTNAME=`hostname`
+	SERVER=`hostname`
 	DATE=`date +%Y%m%dT%H%M%S`
+
+	# seta a tag utilizada no backup
+	# essa tag identifica o backup, visivel nas views do rman
+	BKP_TAG="level${LEVEL}_${DATE}"
 
 	# extrai o numero de cpus do servidor, e utiliza esse valor 
 	# no backup paralelo em disco
 	NCPUS=`grep "model name" /proc/cpuinfo | wc -l`
 
-	# parametros do TDP
-	TDPO="ENV=(TDPO_OPTFILE=/opt/tivoli/tsm/client/oracle/bin64/tdpo.opt)"
-
 	# cria o diretorio do log do backup, se nao existir 
-	BKP_BASE="/u08/app/oracle/rman"
-	BKP_LOG_DIR="$BKP_BASE/log"
-	mkdir -p $BKP_LOG_DIR
-
-	# cria o diretorio do backup nfs
-	mkdir -p ${NFS_DISK}/${HOSTNAME}
+	mkdir -p $LOG_DIR
 
 	# arquivo de log do backup
-	BKP_LOG="$BKP_LOG_DIR/${HOSTNAME}_${DBNAME}_${DATE}.log"
-
-	# seta a tag utilizada no backup
-	# essa tag identifica o backup, visivel nas views do rman
-	BKP_TAG="level${LEVEL}_${DATE}"
-	
-	# aloca 8 canais para backup via TDP, incluindo o formato
-	for (( i=1; i<=8; i++ )) ; do	
-		CHANNEL_TAPE+="allocate channel c${i} device type sbt_tape format '%d_level${LEVEL}_%D_%M_%Y_%s_%t_%U.rman' parms '${TDPO}';"
-	done
-
-	# especifica o formato do autobackup em fita
-	AUTOBACKUP_TAPE="%d_autobkp_%D_%M_%Y_%F.rman"
+	BKP_LOG="$LOG_DIR/${SERVER}_${DBNAME}_${DATE}.log"
 
 	# formato de data/horario utilizado no log do rman
 	export NLS_DATE_FORMAT='HH24:MI:SS DD/MM/YYYY';
@@ -80,6 +80,14 @@ function setvar () {
 	# extrai a versao do banco
 	ORAVER=$(tnsping | grep -i version | awk '{print $7}' | cut -d\. -f1)
 
+	# utiliza catalogo
+	if [[ ${USE_CATALOG} == "1" ]] ; then
+		RMAN_CATALOG="conect catalog ${CATALOG}"
+	else
+		RMAN_CATALOG=""
+	fi
+
+
 	# caso seja backup do tipo archive (level 2)
 	if [[ ${LEVEL} == "2" ]] ; then
 		RMAN_DISK="backup as compressed backupset filesperset 10 archivelog all tag = 'ARCH-${DATE}';"
@@ -94,16 +102,45 @@ function setvar () {
 		fi
 	fi
 	
-	# faz backup da recovery area em NFS	
-	if [[ "$ORAVER" == "10" ]] ; then
-		RMAN_NFS=""
+	## PARAM NFS
+	if [[ ${USE_NFS} == "1" ]] ; then
+		# cria o diretorio do backup nfs
+		mkdir -p ${NFS_DISK}/${SERVER}
+		
+		# faz backup da recovery area em NFS
+		if [[ "$ORAVER" == "10" ]] ; then
+			RMAN_NFS=""
+		else
+			RMAN_NFS="backup recovery area to destination '${NFS_DISK}/${SERVER}';"
+		fi
 	else
-		RMAN_NFS="backup recovery area to destination '${NFS_DISK}/${HOSTNAME}';"
+		RMAN_NFS=""
 	fi
 
-	# faz backup via TDP
-        RMAN_TDP="${CHANNEL_TAPE}
-backup recovery area;"
+	## PARAM TAPE
+	if [[ ${USE_TAPE} == "1" ]] ; then
+		# aloca 8 canais para backup via TDP, incluindo o formato
+		for (( i=1; i<=8; i++ )) ; do	
+			CHANNEL_TAPE+="allocate channel c${i} device type sbt_tape format '%d_level${LEVEL}_%D_%M_%Y_%s_%t_%U.rman' parms '${TDPO}';"
+		done
+		# especifica o formato do autobackup em fita
+		AUTOBACKUP_TAPE="%d_autobkp_%D_%M_%Y_%F.rman"
+
+		# configuracao TDP
+		CONFIG_TDP="configure channel device type 'sbt_tape' parms '${TDPO}';"
+		CONFIG_TDP+="configure controlfile autobackup format for device type sbt_tape to '${AUTOBACKUP_TAPE}';"
+	
+		# comando de backup via TDP
+        	RMAN_TDP="${CHANNEL_TAPE}
+		backup recovery area;"
+		
+		# comando para limpeza de backups via TDP
+		DELETE_TDP="delete noprompt obsolete recovery window of ${RETENT_TAPE} days device type sbt_tape;"
+	else
+		CONFIG_TDP=""	
+		RMAN_TDP=""
+		DELETE_TDP=""
+	fi
 
 	# backup do controlfile
 	RMAN_CFILE="backup as compressed backupset current controlfile tag = 'CTF-${DATE}';"
@@ -125,40 +162,30 @@ backup recovery area;"
 function backup () {
 
 rman target / msglog $BKP_LOG append > /dev/null 2>&1 <<EOF
-connect catalog ${CATALOG}
+${RMAN_CATALOG}
 set echo on;
 set command id to '${BKP_TAG}';
 configure default device type to disk;
 configure backup optimization on;
 configure controlfile autobackup on;
 configure device type disk parallelism ${NCPUS};
-configure channel device type 'sbt_tape' parms '${TDPO}';
-configure controlfile autobackup format for device type sbt_tape to '${AUTOBACKUP_TAPE}';
-run { 
+${CONFIG_TDP}
+run {
 ${RMAN_DISK} 
 ${RMAN_CFILE} 
 ${RMAN_SPFILE}
 ${RMAN_TDP}
 delete force noprompt archivelog all backed up 1 times to disk; 
 delete noprompt obsolete recovery window of ${RETENT_DISK} days device type disk; 
-delete noprompt obsolete recovery window of ${RETENT_TAPE} days device type sbt_tape;
+${DELETE_TDP}
 }
 ${RMAN_NFS}
 EOF
-
 	# coloca o codigo de retorno do rman em variavel
 	DUMP_ERROR=$?
 
 }
 
-# Atualiza as informacoes de backup no catalogo do rman, na aplicacao
-# Rman Report
-
-function atualiza_rman_report () {
-
-	DBID=$(grep DBID $BKP_LOG | awk '{print $6}' | cut -d \= -f2 | cut -d \) -f1)
-	wget "http://webapp/rman_update.php?dbid=$DBID" -O - > /dev/null 2> /dev/null
-}
 
 # Se o backup rman teve algum erro (DUMP_ERROR), manda e-mail com o log
 # codigo de retorno em MAIL_ERROR
@@ -167,7 +194,7 @@ function email () {
 
 	# Envia e-mail somente em caso de erro no backup do RMAN
 	if [[ ! $DUMP_ERROR -eq 0 ]] ; then	
-                MAIL_SUBJECT="Backup RMAN level $LEVEL - $HOSTNAME - $DBNAME - ERRO"
+                MAIL_SUBJECT="Backup RMAN level $LEVEL - $SERVER - $DBNAME - ERRO"
 		
 		MAIL_BODY+="\n[rman] RMAN terminou com erro, log em anexo."
 
@@ -251,13 +278,11 @@ function rc () {
 	setvar
 	# Backup em disco e fita
 	backup
-	# Atualiza as informacoes no rman report
-	atualiza_rman_report
 	# Em caso de erro, envia e-mail
 	email
 	# Compacta log do rman
 	compacta
 	# Retorna o código de erro
 	rc
-) 9>/u08/app/oracle/rman_bkp.lock
+) 9>$LOCK_FILE
 
