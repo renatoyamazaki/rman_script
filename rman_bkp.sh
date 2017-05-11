@@ -7,16 +7,16 @@ DBNAME=$1	# ex. 'PD01', 'CATRMAN'
 LEVEL=$2	# ex. '0', '1', '2'
 ############## PARAMETROS - GERAIS ############################################
 # lock desse script, para nao executar mais de uma vez ao mesmo tempo
-LOCK_FILE="/u01/app/oracle/rman/bkp.lock"
+LOCK_FILE="/u01/app/oracle/rman/rman_bkp.lock"
 # diretorio onde ficam os logs do backup
 LOG_DIR="/u01/app/oracle/rman/log"
 # e-mails que recebe os logs em caso de erro
 MAIL_DEST=""
 ############## PARAMETROS - CATALOGO ##########################################
 # Uso de um catálogo rman (0 = desativado, 1 = ativado)
-USE_CATALOG=0
+USE_CATALOG=1
 # usuario/senha@tns_do_catalogo
-CATALOG="rman/senha@catrman"
+CATALOG="rman/rmanpass@catrman"
 ############## PARAMETROS - BACKUP LOCAL ######################################
 # retencao do backup no disco em dias
 RETENT_DISK=7
@@ -32,6 +32,10 @@ TDPO="ENV=(TDPO_OPTFILE=/opt/tivoli/tsm/client/oracle/bin64/tdpo.opt)"
 USE_NFS=0
 # diretorio nfs
 NFS_DISK="/u01/app/oracle/rman/nfs"
+############## PARAMETROS - RMAN REPORT #####################################$$
+# utilização da ferramenta de relatorio do rman
+USE_RMAN_REPORT=1
+URL_RMAN_REPORT="http://192.168.1.101/ora/rman_update.php"
 ###############################################################################
 
 
@@ -77,8 +81,18 @@ function setvar () {
 	ORAENV_ASK=NO
 	. oraenv > /dev/null 2>&1
 	
-	# extrai a versao do banco
+	# extrai a versao da instancia
 	ORAVER=$(tnsping | grep -i version | awk '{print $7}' | cut -d\. -f1)
+
+	# extrai o dbid da instancia
+	DBID=$(sqlplus -s / as sysdba<<EOF
+    set heading off                     
+    set feedback off                                             
+    set pages 0                        
+    alter session set optimizer_mode=RULE;
+    select dbid from v\$database;
+EOF)
+
 }
 
 
@@ -86,7 +100,7 @@ function rman_public () {
 
 	# utiliza catalogo
 	if [[ ${USE_CATALOG} == "1" ]] ; then
-		RMAN_CATALOG="conect catalog ${CATALOG}"
+		RMAN_CATALOG="connect catalog ${CATALOG}"
 	else
 		RMAN_CATALOG=""
 	fi
@@ -236,6 +250,15 @@ function compacta () {
 
 }
 
+# Atualiza as informacoes de backup no catalogo do rman, na aplicacao
+# Rman Report
+
+function atualiza_rman_report () {
+	if [[ ${USE_RMAN_REPORT} == "1" ]] ; then
+		wget "${URL_RMAN_REPORT}?dbid=${DBID}" -O - > /dev/null 2>&1
+	fi
+}
+
 
 # de acordo com os codigos de retorno das funcoes,
 # sai com o codigo de retorno da tabela:
@@ -279,6 +302,8 @@ function rc () {
 
 }
 
+###############################################################################
+
 
 ############## MAIN ###########################################################
 (
@@ -297,7 +322,9 @@ function rc () {
 	email
 	# Compacta log do rman
 	compacta
+	# Atualia a aplicacao de report
+	atualiza_rman_report
 	# Retorna o código de erro
 	rc
 ) 9>$LOCK_FILE
-
+###############################################################################
