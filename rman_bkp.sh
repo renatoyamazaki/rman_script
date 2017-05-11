@@ -34,6 +34,7 @@ USE_NFS=0
 NFS_DISK="/u01/app/oracle/rman/nfs"
 ############## PARAMETROS - RMAN REPORT #####################################$$
 # utilização da ferramenta de relatorio do rman
+# more information on https://github.com/renatoyamazaki/rman_script
 USE_RMAN_REPORT=1
 URL_RMAN_REPORT="http://192.168.1.101/ora/rman_update.php"
 ###############################################################################
