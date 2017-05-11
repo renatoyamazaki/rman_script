@@ -1,18 +1,36 @@
 #!/bin/bash
 
-# Quantos dias sao checados desde o ultimo backup rman, passados via parametro
+############## PARAMETROS - PASSADOS NA LINHA DE COMANDO ######################
+# Quantos dias sao checados desde o ultimo backup rman
 CHECK_LEVEL0=$1
 CHECK_LEVEL1=$2
 CHECK_LEVEL2=$3
-
-# Utiliza o nome do servidor para tratar excecoes
-SERVERNAME=`hostname -s`
-
-DBS=($(ps xua | grep [o]ra_arc | awk '{print $NF}' | cut -d"_" -f3 | sort | uniq))
-
+############## PARAMETROS - GERAIS ############################################
+# lock desse script, para nao executar mais de uma vez ao mesmo tempo
+LOCK_FILE="/u01/app/oracle/rman/cron_rman.lock"
+# Script do RMAN
+RMAN_SCRIPT="/u01/app/oracle/rman_bkp.sh"
 ###############################################################################
 
-verify_rman_level0 () {
+
+############## FUNCOES ########################################################
+
+function setvar () {
+
+	# Utiliza o nome do servidor para tratar excecoes
+	SERVERNAME=`hostname -s`
+
+	# Coloca em um vetor todas as instancias com archivelog ativado
+	# oracle enterprise edition
+	DBS=($(ps xua | grep [o]ra_arc | awk '{print $NF}' | cut -d"_" -f3 | sort | uniq))
+	# oracle express edition
+	if [ ${#DBS[@]} -eq 0 ]; then
+		DBS=($(ps xua | grep [x]e_arc | awk '{print $NF}' | cut -d"_" -f3 | sort | uniq))
+	fi
+}
+
+
+function verify_rman_level0 () {
     sqlplus -s / as sysdba<<EOF
     set heading off
     set feedback off
@@ -22,7 +40,8 @@ verify_rman_level0 () {
 EOF
 }
 
-verify_rman_level1 () {
+
+function verify_rman_level1 () {
     sqlplus -s / as sysdba<<EOF
     set heading off
     set feedback off
@@ -32,7 +51,8 @@ verify_rman_level1 () {
 EOF
 }
 
-verify_rman_level2 () {
+
+function verify_rman_level2 () {
     sqlplus -s / as sysdba<<EOF
     set heading off
     set feedback off
@@ -44,34 +64,41 @@ EOF
 
 ###############################################################################
 
-# Executa uma sincronizacao com o NFS
-rsync -a /u09/app/oracle/script/* /u08/app/oracle/script/
 
-# Itera sobre todas as instancias
-for DB in "${DBS[@]}"
-do
-	# Configura as variaveis de ambiente do oracle
-	ORACLE_SID=$DB
-	ORAENV_ASK=NO
-	. oraenv
+############## MAIN ###########################################################
+(
+	# Se já tiver outra execução em andamento, sair
+        flock -n 9 || exit 200
+	# Seta todas as variaiveis necessarias
+	setvar
 
-	# Coloca o resultado dos SQLs nas variaveis
-	level0=$(verify_rman_level0)
-	level1=$(verify_rman_level1)
-	level2=$(verify_rman_level2)
+	# Itera sobre todas as instancias
+	for DB in "${DBS[@]}"
+	do
+		# Configura as variaveis de ambiente do oracle
+		ORACLE_SID=$DB
+		ORAENV_ASK=NO
+		. oraenv
 
-	# Caso o backup level 0 tenha ultrapassado o limite de um período
-	if [ "$level0" -eq 0 ]; then
-		/u08/app/oracle/script/rman_bkp.sh $DB 0 > /dev/null 2>&1
-	else
-		# O backup level 1 é condição excludente do level 0
-		if [ "$level1" -eq 0 ]; then
-			/u08/app/oracle/script/rman_bkp.sh $DB 1 > /dev/null 2>&1
+		# Coloca o resultado dos SQLs nas variaveis
+		level0=$(verify_rman_level0)
+		level1=$(verify_rman_level1)
+		level2=$(verify_rman_level2)
+
+		# Caso o backup level 0 tenha ultrapassado o limite de um período
+		if [ "$level0" -eq 0 ]; then
+			$RMAN_SCRIPT $DB 0 > /dev/null 2>&1
 		else
-			# O backup level 2 é de archives
-			if [ "$level2" -eq 0 ]; then
-				/u08/app/oracle/script/rman_bkp.sh $DB 2 > /dev/null 2>&1
-			fi
+			# O backup level 1 é condição excludente do level 0
+			if [ "$level1" -eq 0 ]; then
+				$RMAN_SCRIPT $DB 1 > /dev/null 2>&1
+			else
+				# O backup level 2 é de archives
+				if [ "$level2" -eq 0 ]; then
+					$RMAN_SCRIPT $DB 2 > /dev/null 2>&1
+				fi
+			fi	
 		fi	
-	fi	
-done
+	done
+) 9>$LOCK_FILE
+###############################################################################
