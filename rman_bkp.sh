@@ -199,9 +199,9 @@ run {
 ${RMAN_DISK} 
 ${RMAN_CFILE} 
 ${RMAN_SPFILE}
-${RMAN_TDP}
 delete force noprompt archivelog all backed up 1 times to disk; 
 delete noprompt obsolete recovery window of ${RETENT_DISK} days device type disk; 
+${RMAN_TDP}
 ${DELETE_TDP}
 }
 ${RMAN_NFS}
